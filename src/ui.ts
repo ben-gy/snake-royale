@@ -12,7 +12,7 @@ export function escapeHtml(s: string): string {
 export const FOOTER_HTML = `
   <footer class="site-footer">
     Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a>
-    · <a href="https://sites.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>
+    · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>
   </footer>`;
 
 export function menuHTML(best: number): string {
@@ -62,7 +62,7 @@ export const ABOUT_HTML = `
   <p>Snake Royale is a free, instant-play take on the arcade classic — one snake for a quick solo run, or a shared arena for a last-one-standing round with friends.</p>
   <p>It runs entirely in your browser with no accounts and no game server. Multiplayer is <strong>peer-to-peer</strong> over WebRTC: a free public signaling relay only helps your devices find each other for the initial handshake — after that, game data flows directly between players and nothing is stored on any server.</p>
   <p>No cookies, no tracking, no third-party fonts. Anonymous, cookie-less page-view counts come from Cloudflare Web Analytics.</p>
-  <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a> · <a href="https://sites.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>.</p>`;
+  <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a> · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>.</p>`;
 
 let activeModal: HTMLElement | null = null;
 
