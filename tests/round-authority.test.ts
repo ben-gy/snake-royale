@@ -104,7 +104,7 @@ describe('round authority follows the frozen roster', () => {
     // in charge of the same round depending on which file you asked.
     const fake = new FakeNet('peerC', ['peerB', 'peerC'], 'peerC');
     const ng = royale(fake);
-    for (let i = 0; i < 3; i++) ng.hostCountStep();
+    ng.begin();
     expect(ng.getPhase()).toBe('play');
 
     const before = ng.getState().tick;
@@ -114,8 +114,8 @@ describe('round authority follows the frozen roster', () => {
     // …and peerB, the lower-sorting seat, must NOT also be driving it.
     const other = new FakeNet('peerB', ['peerB', 'peerC'], 'peerC');
     const ngB = royale(other);
-    for (let i = 0; i < 3; i++) ngB.hostCountStep();
-    expect(ngB.getPhase()).toBe('count'); // a client: it never ran the countdown
+    ngB.begin();
+    expect(ngB.getPhase()).toBe('count'); // a client: its begin() is not the room's
     expect(other.sent.some((m) => m.name === 'snap')).toBe(false);
   });
 
@@ -123,7 +123,7 @@ describe('round authority follows the frozen roster', () => {
     // peerB is the seated host and is happily running the arena.
     const fake = new FakeNet('peerB', ['peerB', 'peerC'], 'peerB');
     const ng = royale(fake);
-    for (let i = 0; i < 3; i++) ng.hostCountStep();
+    ng.begin();
     expect(ng.getPhase()).toBe('play');
 
     // 'peerA' wandered in mid-round and then inherited the room — net.ts hands
@@ -146,7 +146,7 @@ describe('round authority follows the frozen roster', () => {
     // is how two halves of a broken room each run their own arena.
     const fake = new FakeNet('peerB', ['peerB', 'peerC'], null);
     const ng = royale(fake);
-    for (let i = 0; i < 3; i++) ng.hostCountStep();
+    ng.begin();
     expect(ng.getPhase()).toBe('count');
     ng.hostTick();
     expect(ng.getState().tick).toBe(0);
@@ -178,7 +178,7 @@ describe('round authority follows the frozen roster', () => {
     ng.onRoster();
 
     // peerC is now the smallest seat still present: it must pick the round up.
-    for (let i = 0; i < 3; i++) ng.hostCountStep();
+    ng.begin();
     expect(ng.getPhase()).toBe('play');
     const before = ng.getState().tick;
     ng.hostTick();
@@ -188,7 +188,7 @@ describe('round authority follows the frozen roster', () => {
   it('a seated host ignores input from a peer outside the roster', () => {
     const fake = new FakeNet('peerB', ['peerB', 'peerC'], 'peerB');
     const ng = royale(fake);
-    for (let i = 0; i < 3; i++) ng.hostCountStep();
+    ng.begin();
     fake.arrive('peerA');
 
     const dir = ng.getState().snakes[0].pending;
@@ -221,7 +221,7 @@ describe('per-round channel teardown (the fan-out hazard)', () => {
   it('a destroyed round stops steering its stale state', () => {
     const fake = new FakeNet('peerB', ['peerB', 'peerC']);
     const ng = royale(fake);
-    for (let i = 0; i < 3; i++) ng.hostCountStep();
+    ng.begin();
     ng.destroy();
 
     const before = ng.getState().snakes[1].pending;

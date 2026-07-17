@@ -120,7 +120,7 @@ describe('host transfer takeover (contract gate #2)', () => {
     });
 
     // Client adopts a host snapshot mid-round (phase = play).
-    const snap: Snapshot = { state: craftedTwoSnake(), phase: 'play', count: 0 };
+    const snap: Snapshot = { state: craftedTwoSnake(), phase: 'play' };
     fake.deliver('snap', snap, 'peerA');
     expect(ng.getPhase()).toBe('play');
     const tickBefore = ng.getState().tick;
@@ -147,7 +147,7 @@ describe('host transfer takeover (contract gate #2)', () => {
     ng.destroy();
   });
 
-  it('a fresh host runs its own countdown then plays', () => {
+  it('holds the arena frozen until the host says go, then plays', () => {
     const fake = new FakeNet('peerA', ['peerA', 'peerB']);
     const ng = new NetRoyale({
       net: fake,
@@ -162,20 +162,23 @@ describe('host transfer takeover (contract gate #2)', () => {
       onUpdate: () => {},
     });
     expect(ng.getPhase()).toBe('count');
-    ng.hostCountStep();
-    ng.hostCountStep();
-    ng.hostCountStep();
-    expect(ng.getPhase()).toBe('play');
-    const before = ng.getState().tick;
+    // The arena exists but nothing moves while the local 3-2-1 is running: a
+    // snake that started travelling behind the overlay would be unrecoverable.
+    const start = ng.getState().tick;
     ng.hostTick();
-    expect(ng.getState().tick).toBe(before + 1);
+    expect(ng.getState().tick).toBe(start);
+
+    ng.begin(); // the host's local countdown finished
+    expect(ng.getPhase()).toBe('play');
+    ng.hostTick();
+    expect(ng.getState().tick).toBe(start + 1);
     ng.destroy();
   });
 });
 
 describe('snapshot serialization', () => {
   it('round-trips through JSON unchanged', () => {
-    const snap: Snapshot = { state: craftedTwoSnake(), phase: 'play', count: 0 };
+    const snap: Snapshot = { state: craftedTwoSnake(), phase: 'play' };
     const round = JSON.parse(JSON.stringify(snap)) as Snapshot;
     expect(round).toEqual(snap);
     expect(round.state.snakes[0].body).toEqual(snap.state.snakes[0].body);

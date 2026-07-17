@@ -682,6 +682,213 @@ body {
   margin: 8px 0 0;
   text-align: center;
 }
+/* ---- public / private ------------------------------------------------------ */
+/* The IP disclosure sits AT the opt-in, not in About: it is the whole cost of a
+   public room, and nobody opens About before tapping a button. */
+.re-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  margin: 0 0 4px;
+  text-align: left;
+}
+.vis {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.vis-name {
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+.vis-meta {
+  font-size: 0.68rem;
+}
+.mode-note.pub {
+  color: var(--gold);
+}
+
+/* ---- public room list ------------------------------------------------------ */
+.re-rooms {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.re-room {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  text-align: left;
+  align-items: baseline;
+  padding: 10px 12px;
+  border-radius: 10px;
+  min-height: 44px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-family: inherit;
+  cursor: pointer;
+}
+.re-room:hover {
+  border-color: var(--accent);
+}
+.re-room:active {
+  transform: translateY(1px);
+}
+.re-room-host {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.re-room-code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+.re-room-note,
+.re-room-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.re-room-meta {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.re-room-state {
+  grid-column: 1 / -1;
+  font-size: 0.68rem;
+  color: var(--gold);
+  margin-top: 2px;
+}
+.re-room.playing {
+  opacity: 0.8;
+}
+.re-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 4px 0 12px;
+  text-align: left;
+}
+
+/* ---- arena picker ---------------------------------------------------------- */
+.modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  width: 100%;
+  margin-bottom: 10px;
+}
+.modes .mode-blurb {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-height: 1.1em;
+}
+/* The visibility chips are deliberately the same object as a mode chip — same
+   grid, same weight. A public room is a choice about the room, not a warning. */
+.mode-chip,
+.vis-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 6px;
+  border-radius: 12px;
+  min-height: 44px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: inherit;
+  cursor: pointer;
+}
+.mode-chip.on,
+.vis-chip.on {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.mode-name {
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+.mode-meta {
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+.mode-note {
+  margin: 0 0 8px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.mode-note strong {
+  color: var(--text);
+}
+
+/* ---- countdown ------------------------------------------------------------- */
+/* Sits over the arena so the snakes are readable before they move — the whole
+   point is that everyone gets the same look at where theirs is pointing. */
+.cd-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+.countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 15, 0.55);
+}
+.cd-num {
+  font-size: clamp(3rem, 16vw, 6rem);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--gold);
+  text-shadow: 0 0 30px rgba(240, 196, 32, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+.cd-num.cd-go {
+  color: var(--accent-2);
+  text-shadow: 0 0 30px rgba(0, 158, 115, 0.6);
+}
+.cd-num.cd-tick {
+  animation: cd-pop 900ms ease-out;
+}
+.cd-num.cd-go {
+  animation: cd-pop 420ms ease-out;
+}
+.countdown.reduced .cd-num {
+  animation: none;
+}
+@keyframes cd-pop {
+  0% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+  18% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.94);
+    opacity: 0.85;
+  }
+}
+
 .lobby-invite {
   display: flex;
   gap: 8px;

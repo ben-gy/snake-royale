@@ -82,7 +82,10 @@ interface Seat {
   got: RoundInfo[];
 }
 
-function table(ids: PeerId[], opts: { minPlayers?: number } = {}): Seat[] {
+function table(
+  ids: PeerId[],
+  opts: { minPlayers?: number; modeOf?: (id: PeerId) => string } = {},
+): Seat[] {
   const bus = new Bus();
   return ids.map((id) => {
     const net = mockNet(bus, id);
@@ -91,6 +94,8 @@ function table(ids: PeerId[], opts: { minPlayers?: number } = {}): Seat[] {
       net,
       playerName: id.toUpperCase(),
       minPlayers: opts.minPlayers ?? 2,
+      // Each seat "wants" its own arena; only the host's may reach the round.
+      roundOpts: () => ({ mode: opts.modeOf?.(id) ?? id }),
       onRound: (info) => seat.got.push(info),
     });
     return seat;
@@ -340,5 +345,44 @@ describe('createRounds — never deadlock waiting for a vote that never comes', 
     expect(seats[2].got.length).toBe(2);
     expect(seats[2].got[1].players.map((p) => p.id)).toEqual(['a', 'b', 'c']);
     vi.useRealTimers();
+  });
+});
+
+describe("createRounds — the host's arena, not each peer's", () => {
+  it("gives every peer the HOST's mode, not their own", () => {
+    // Each seat wants a different arena. Only one may win: the grid and the tick
+    // rate both ride on it, so two peers disagreeing are stepping the same seed
+    // at different speeds on different-sized floors — every snapshot then fights
+    // the last, and neither peer's snake is where the other thinks it is.
+    seats = table(['a', 'b', 'c'], { minPlayers: 3, modeOf: (id) => `mode-${id}` });
+    seats.forEach((s) => s.rounds.vote());
+
+    const opts = seats.map((s) => s.got[0].opts);
+    expect(opts[0]).toEqual(opts[1]);
+    expect(opts[1]).toEqual(opts[2]);
+    expect(opts[0]).toEqual({ mode: 'mode-a' }); // 'a' hosts
+  });
+
+  it("re-reads the host's choice for each rematch", () => {
+    let hostMode = 'royale';
+    seats = table(['a', 'b'], { modeOf: () => hostMode });
+    seats.forEach((s) => s.rounds.vote());
+    expect(seats[1].got[0].opts).toEqual({ mode: 'royale' });
+
+    // The host switches arena on the results screen; the next round must use it.
+    seats.forEach((s) => s.rounds.finish());
+    hostMode = 'colossus';
+    seats.forEach((s) => s.rounds.vote());
+
+    expect(seats[1].got[1].opts).toEqual({ mode: 'colossus' });
+  });
+
+  it("gossips the host's pick to guests before the round starts", () => {
+    // What the lobby renders to a guest. It must be the host's, not the guest's
+    // own — a guest showing its local pick under "Host picked" is a confident
+    // lie, and the guest only finds out it was wrong when the arena appears.
+    seats = table(['a', 'b'], { modeOf: (id) => `mode-${id}` });
+    expect(seats[1].rounds.state().hostOpts).toEqual({ mode: 'mode-a' });
+    expect(seats[1].rounds.state().hostOpts).not.toEqual({ mode: 'mode-b' });
   });
 });

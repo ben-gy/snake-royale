@@ -15,7 +15,9 @@ export const FOOTER_HTML = `
     · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>
   </footer>`;
 
-export function menuHTML(best: number): string {
+/** `modes` is the arena picker (src/modes.ts) — the choice this player takes into
+ *  Endless, and proposes as host of a room. */
+export function menuHTML(best: number, modes: string): string {
   return `
     <section class="screen menu">
       <div class="brand">
@@ -25,6 +27,7 @@ export function menuHTML(best: number): string {
         <h1 class="title">Snake&nbsp;Royale</h1>
         <p class="tagline">Eat, grow, cut them off. Last snake slithering wins.</p>
       </div>
+      ${modes}
       <div class="menu-actions">
         <button class="btn btn-primary" data-act="solo">▶ Play — Endless</button>
         <button class="btn" data-act="friends">👥 Play with friends</button>
@@ -61,6 +64,7 @@ export const HOWTO_HTML = `
 export const ABOUT_HTML = `
   <p>Snake Royale is a free, instant-play take on the arcade classic — one snake for a quick solo run, or a shared arena for a last-one-standing round with friends.</p>
   <p>It runs entirely in your browser with no accounts and no game server. Multiplayer is <strong>peer-to-peer</strong> over WebRTC: a free public signaling relay only helps your devices find each other for the initial handshake — after that, game data flows directly between players and nothing is stored on any server.</p>
+  <p><strong>Public rooms and your IP address.</strong> Rooms are private by default: only people you send the code to can find them. If you list a room publicly — or tap “Browse public games” — your browser joins a shared peer-to-peer list, and connecting to a peer means exchanging IP addresses. So on the public list, strangers can see your IP; in a private room, only the friends you invited can. That is true of any peer-to-peer game and there is no server here to hide behind. It is opt-in on both sides, nothing joins the list until you tap it, and your browser leaves the list as soon as you stop browsing or your room starts or goes private.</p>
   <p>No cookies, no tracking, no third-party fonts. Anonymous, cookie-less page-view counts come from Cloudflare Web Analytics.</p>
   <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a> · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>.</p>`;
 

@@ -9,7 +9,14 @@
  * AUTHORITY IS net.host(), CONSTRAINED TO THE FROZEN ROSTER. There is one answer
  * to "who is host" — the room's incumbent (net.ts hands it over only when the
  * host leaves) — and roundHost() below simply refuses to point at a peer who
- * cannot act on it. A spectator who wandered in after the countdown holds no
+ * cannot act on it.
+ *
+ * The countdown DIGITS are not in here — each peer runs its own from the moment
+ * the round start arrived (src/countdown.ts). This file owns only the flip from
+ * 'count' to 'play', which the host performs when its local count ends: that is
+ * the instant every snake begins moving, and a room needs exactly one of it.
+ *
+ * A spectator who wandered in after the countdown holds no
  * NetRoyale: if it ever drove the round, the real host would stand down, nobody
  * would broadcast a snapshot, and the arena would freeze for the whole room,
  * permanently. So when the incumbent is not seated in THIS round, the seats fall
@@ -33,18 +40,23 @@ import {
   type StepEvents,
 } from './game';
 
+/**
+ * 'count' is the arena built but frozen: snapshots flow, nothing steps. The
+ * DIGITS are not here — every peer counts locally from the moment the round
+ * start arrived (see src/countdown.ts). What must stay on the wire is the flip
+ * to 'play', because that is the instant the snakes start moving and there can
+ * only be one of it.
+ */
 export type Phase = 'count' | 'play' | 'over';
 
 export interface Snapshot {
   state: RoyaleState;
   phase: Phase;
-  count: number;
 }
 
 export interface NetUpdate {
   state: RoyaleState;
   phase: Phase;
-  count: number;
   events: StepEvents;
   /** True the frame this peer was promoted to host. */
   promoted?: boolean;
@@ -58,7 +70,8 @@ export interface NetRoyaleConfig {
   seats: PeerId[];
   players: { name: string; color: number }[];
   tickMs?: number;
-  countMs?: number;
+  /** Pellets to hold on the floor. Defaults to one per snake plus one. */
+  foodTarget?: number;
   onUpdate: (u: NetUpdate) => void;
   /** Disable the real setInterval timers (unit tests drive ticks by hand). */
   manualTimers?: boolean;
@@ -71,18 +84,27 @@ export class NetRoyale {
   private seed: number;
   private seats: PeerId[];
   private tickMs: number;
-  private countMs: number;
   private onUpdate: (u: NetUpdate) => void;
   private manual: boolean;
 
   private state: RoyaleState;
   private phase: Phase = 'count';
-  private count = 3;
   private rng: Rng;
+
+  /**
+   * Our local countdown finished and asked for the snakes to move, but we were
+   * not this round's host at the time so it was not ours to grant.
+   *
+   * Remembered rather than dropped, because of a real gap: if the host leaves in
+   * the sliver between our count ending and its own, nobody is left who is both
+   * host and still counting — our begin() was ignored for not being host, and
+   * the promoted peer's countdown has already fired. The arena would sit frozen
+   * at 3-2-1 forever with every peer waiting on a start that cannot come.
+   */
+  private beginRequested = false;
 
   private hosting = false;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private countTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
 
   private sendIn: ((d: { dir: Dir }, to?: PeerId | PeerId[]) => void) & { off: Unsubscribe };
@@ -94,7 +116,6 @@ export class NetRoyale {
     this.seed = cfg.seed;
     this.seats = cfg.seats;
     this.tickMs = cfg.tickMs ?? 110;
-    this.countMs = cfg.countMs ?? 800;
     this.onUpdate = cfg.onUpdate;
     this.manual = cfg.manualTimers ?? false;
     this.rng = makeRng(cfg.seed);
@@ -102,7 +123,7 @@ export class NetRoyale {
       grid: cfg.grid,
       mode: 'royale',
       players: cfg.players,
-      foodTarget: Math.max(2, cfg.players.length + 1),
+      foodTarget: cfg.foodTarget ?? Math.max(2, cfg.players.length + 1),
     });
 
     this.sendIn = this.net.channel<{ dir: Dir }>('in', (data, from) => {
@@ -118,7 +139,6 @@ export class NetRoyale {
       if (from !== this.roundHost()) return;
       this.state = snap.state;
       this.phase = snap.phase;
-      this.count = snap.count;
       this.emit(NO_EVENTS);
     });
 
@@ -165,14 +185,24 @@ export class NetRoyale {
   getPhase(): Phase {
     return this.phase;
   }
-  getCount(): number {
-    return this.count;
-  }
   mySeat(): number {
     return this.seats.indexOf(this.net.selfId);
   }
   snapshot(): Snapshot {
-    return { state: this.state, phase: this.phase, count: this.count };
+    return { state: this.state, phase: this.phase };
+  }
+
+  /**
+   * Our local 3-2-1 finished. On the host that starts the arena for everyone; on
+   * a guest it is noted and forgotten, because the guest's clock does not get to
+   * move anyone's snake — the flip arrives by snapshot a hop later.
+   */
+  begin(): void {
+    this.beginRequested = true;
+    if (this.destroyed || !this.amHost() || this.phase !== 'count') return;
+    this.phase = 'play';
+    this.sendSnap(this.snapshot());
+    this.emit(NO_EVENTS);
   }
 
   /** Player asked to turn. Optimistic locally; authoritative on the host. */
@@ -211,6 +241,9 @@ export class NetRoyale {
     const mine = this.amHost();
     if (mine && !this.hosting) {
       this.startHosting(false);
+      // Our own countdown may have run out while we were still a guest, in which
+      // case nobody is left to start the arena — see beginRequested.
+      if (this.beginRequested && this.phase === 'count') this.begin();
       this.emit(NO_EVENTS, true);
     } else if (!mine && this.hosting) {
       this.stopHosting();
@@ -225,22 +258,6 @@ export class NetRoyale {
     if (this.state.over) this.phase = 'over';
     this.sendSnap(this.snapshot());
     this.emit(events);
-  }
-
-  /** One countdown step. Public for tests. */
-  hostCountStep(): void {
-    if (this.destroyed || !this.amHost() || this.phase !== 'count') return;
-    this.count--;
-    if (this.count <= 0) {
-      this.phase = 'play';
-      this.count = 0;
-      if (this.countTimer) {
-        clearInterval(this.countTimer);
-        this.countTimer = null;
-      }
-    }
-    this.sendSnap(this.snapshot());
-    this.emit(NO_EVENTS);
   }
 
   destroy(): void {
@@ -267,9 +284,8 @@ export class NetRoyale {
     this.sendSnap(this.snapshot());
     if (this.manual) return;
     this.stopTimers();
-    if (this.phase === 'count') {
-      this.countTimer = setInterval(() => this.hostCountStep(), this.countMs);
-    }
+    // Safe to run from the moment we host: hostTick() is a no-op until the phase
+    // flips, and the flip is begin()'s job alone.
     this.tickTimer = setInterval(() => this.hostTick(), this.tickMs);
     void fresh;
   }
@@ -281,16 +297,13 @@ export class NetRoyale {
 
   private stopTimers(): void {
     if (this.tickTimer) clearInterval(this.tickTimer);
-    if (this.countTimer) clearInterval(this.countTimer);
     this.tickTimer = null;
-    this.countTimer = null;
   }
 
   private emit(events: StepEvents, promoted = false): void {
     this.onUpdate({
       state: this.state,
       phase: this.phase,
-      count: this.count,
       events,
       promoted,
     });
