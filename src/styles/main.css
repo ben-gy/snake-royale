@@ -430,17 +430,60 @@ body {
   height: 14px;
   border-radius: 50%;
 }
+.result-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
 .result-name {
   flex: 1;
+}
+.result-fate {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.result-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.result-stat b {
+  color: var(--text);
+  font-weight: 700;
 }
 .result-score {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
+.results-tally {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0 0 10px;
+}
+.results-tally span {
+  white-space: nowrap;
+}
 .results-actions {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.results-ready {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 10px 0 0;
+  min-height: 1.2em;
+}
+.btn.waiting {
+  opacity: 0.75;
 }
 
 /* ---------- Modal ---------- */

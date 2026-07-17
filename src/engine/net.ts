@@ -15,13 +15,30 @@
  * state and broadcasts snapshots; clients send inputs. For deterministic
  * lockstep games, pair this with rng.ts (shared seed) instead.
  *
- * COPY THIS FILE into src/ and adapt — do not re-roll the peer/host logic.
- *
- *   npm i trystero
+ * Copied from the gh-game-factory patterns/ engine. Snake Royale runs the star:
+ * the host owns RoyaleState and broadcasts a snapshot each tick on 'snap';
+ * clients send direction intent on 'in' (see net-game.ts).
  *
  * Trystero limits to remember:
  *  - Action names (channels) must be <= 12 bytes. Keep them short: 'mv','snap'.
  *  - Payloads are JSON-serialized (or ArrayBuffer/Blob for binary). Keep small.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE ROOM PER SESSION — THE RULE THAT MATTERS MOST
+ *
+ * Never leave a room and rejoin the same one to "reset" for a rematch. It looks
+ * harmless and it is catastrophic. Trystero memoizes `joinRoom` on appId+roomId
+ * (strategy.js: `if (occupiedRooms[appId]?.[roomId]) return occupiedRooms...`)
+ * while `room.leave()` is ASYNC and defers its real teardown behind a ~99ms
+ * timer (room.js). So `net.leave(); createNet(...)` in the same tick hands you
+ * back the very room object that is about to be destroyed. Moments later the
+ * deferred teardown clears the announce timer and unsubscribes from every relay
+ * — your "fresh" Net is a corpse: permanently deaf, roster of one, and every
+ * peer elects itself host. Both players sit in the right room code, alone.
+ *
+ * Keep the mesh alive and version the rounds inside it — see rematch.ts.
+ * `createNet` enforces this: rejoining a room that is still tearing down throws.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 // Default = nostr strategy. To switch: `import { joinRoom, selfId } from 'trystero/torrent'`.
@@ -53,6 +70,9 @@ export interface NetHandlers {
   onHostChange?: (hostId: PeerId, isSelfHost: boolean) => void;
 }
 
+/** Unsubscribe a receiver registered via `channel()`. */
+export type Unsubscribe = () => void;
+
 export interface Net {
   /** This peer's stable id for the session. */
   readonly selfId: PeerId;
@@ -66,17 +86,26 @@ export interface Net {
   count(): number;
   /**
    * Register a receive handler for a named channel. Returns a `send` function.
-   * Channels are lazily created and memoized. `send(data)` broadcasts to all;
-   * `send(data, toPeers)` targets a subset (e.g. just the host).
+   * `send(data)` broadcasts to all; `send(data, toPeers)` targets a subset.
+   *
+   * Handlers FAN OUT: calling channel() twice with the same name registers both
+   * receivers and both fire. (The old build memoized on name and silently threw
+   * the second receiver away, which made any second subsystem on a live net —
+   * a rematch lobby, a fresh round — permanently deaf.) Use `send.off()` to
+   * detach one receiver without disturbing the others.
    */
   channel<T = NetData>(
     name: string,
     onReceive: (data: T, from: PeerId) => void,
-  ): (data: T, toPeers?: PeerId | PeerId[]) => void;
+  ): ((data: T, toPeers?: PeerId | PeerId[]) => void) & { off: Unsubscribe };
   /** Round-trip latency (ms) to a peer, measured via the ping channel. */
   ping(id: PeerId): Promise<number>;
-  /** Tear down the room and all channels. Call on unload / leave. */
-  leave(): void;
+  /**
+   * Tear down the room and all channels. Call on leave — NOT between rounds.
+   * Resolves once Trystero has actually retired the room, so it is safe to join
+   * the same room id again afterwards. Always `await` it before any rejoin.
+   */
+  leave(): Promise<void>;
 }
 
 /** min-id election: everyone computes the same host from the same sorted list. */
@@ -84,13 +113,70 @@ function electHost(peers: PeerId[]): PeerId {
   return peers.reduce((min, p) => (p < min ? p : min), peers[0]);
 }
 
+// ── join registry ───────────────────────────────────────────────────────────
+// Tracks which rooms this page has open so the leave/rejoin trap above fails
+// loudly at the call site instead of silently producing a dead mesh. Also backs
+// netStats() so tests can assert the "one join per session" invariant directly,
+// without needing a network, a relay model, or a browser.
+
+type RoomPhase = 'joined' | 'leaving';
+const registry = new Map<string, RoomPhase>();
+let joinCount = 0;
+
+const roomKey = (appId: string, roomId: string): string => `${appId}|${roomId}`;
+
+export interface NetStats {
+  /** Total createNet() calls since reset — the rematch invariant asserts this. */
+  joins: number;
+  /** Rooms currently joined or tearing down. */
+  active: string[];
+}
+
+/** Introspection for tests and dev HUDs. */
+export function netStats(): NetStats {
+  return {
+    joins: joinCount,
+    active: [...registry.keys()].map((k) => k.replace('|', '/')),
+  };
+}
+
+/** Test-only: clear the registry between cases. */
+export function resetNetStats(): void {
+  registry.clear();
+  joinCount = 0;
+}
+
 export function createNet(config: NetConfig, handlers: NetHandlers = {}): Net {
+  const key = roomKey(config.appId, config.roomId);
+  const phase = registry.get(key);
+  if (phase === 'leaving') {
+    throw new Error(
+      `net: rejoined "${config.roomId}" while it was still tearing down. Trystero ` +
+        `would hand back the dying room and the mesh would never form (both peers ` +
+        `become host, alone). For a rematch, keep the Net and start a new round ` +
+        `(see rematch.ts). To genuinely leave and come back, "await net.leave()" first.`,
+    );
+  }
+  if (phase === 'joined') {
+    throw new Error(
+      `net: already joined "${config.roomId}" — reuse the existing Net rather than ` +
+        `creating a second one for the same room.`,
+    );
+  }
+  registry.set(key, 'joined');
+  joinCount++;
+
   const room = joinRoom(
     { appId: config.appId, ...(config.password ? { password: config.password } : {}) },
     config.roomId,
   );
 
-  const sends = new Map<string, (d: NetData, to?: PeerId | PeerId[]) => void>();
+  /** name -> the fan-out set of receivers, plus the memoized trystero sender. */
+  interface Chan {
+    send: (d: NetData, to?: PeerId | PeerId[]) => void;
+    handlers: Set<(data: never, from: PeerId) => void>;
+  }
+  const chans = new Map<string, Chan>();
   let currentHost: PeerId = selfId;
 
   const roster = (): PeerId[] => [selfId, ...Object.keys(room.getPeers())].sort();
@@ -146,20 +232,37 @@ export function createNet(config: NetConfig, handlers: NetHandlers = {}): Net {
         // Trystero hard-limits action names to 12 bytes; fail loud in dev.
         throw new Error(`net channel "${name}" exceeds 12 bytes`);
       }
-      const existing = sends.get(name);
-      if (existing) return existing as (d: T, to?: PeerId | PeerId[]) => void;
-      // Trystero 0.21 constrains action payloads to its DataPayload union; our
-      // JSON-safe generic satisfies it at runtime, so bypass the compile check.
-      const make = room.makeAction as unknown as (
-        n: string,
-      ) => [
-        (d: T, to?: PeerId | PeerId[]) => void,
-        (cb: (d: T, from: PeerId) => void) => void,
-      ];
-      const [send, get] = make(name);
-      get((data, from) => onReceive(data, from));
-      sends.set(name, send as (d: NetData, to?: PeerId | PeerId[]) => void);
-      return send as (d: T, to?: PeerId | PeerId[]) => void;
+      let chan = chans.get(name);
+      if (!chan) {
+        // Trystero constrains payloads to a JSON/binary type; our channels are
+        // generic JSON so we bridge through the untyped makeAction here.
+        const make = room.makeAction as unknown as (
+          n: string,
+        ) => [
+          (d: NetData, to?: PeerId | PeerId[]) => void,
+          (cb: (d: NetData, from: PeerId) => void) => void,
+        ];
+        const [send, get] = make(name);
+        const created: Chan = { send, handlers: new Set() };
+        // One trystero receiver per name, fanning out to every subscriber. Copy
+        // the set first so a handler that unsubscribes mid-dispatch is safe.
+        get((data, from) => {
+          for (const h of [...created.handlers]) (h as (d: NetData, f: PeerId) => void)(data, from);
+        });
+        chans.set(name, created);
+        chan = created;
+      }
+      const handler = onReceive as (data: never, from: PeerId) => void;
+      chan.handlers.add(handler);
+
+      const send = ((data: T, to?: PeerId | PeerId[]) => chan!.send(data, to)) as ((
+        data: T,
+        to?: PeerId | PeerId[],
+      ) => void) & { off: Unsubscribe };
+      send.off = () => {
+        chan!.handlers.delete(handler);
+      };
+      return send;
     },
 
     ping(id: PeerId) {
@@ -173,10 +276,18 @@ export function createNet(config: NetConfig, handlers: NetHandlers = {}): Net {
       });
     },
 
-    leave() {
-      room.leave();
-      sends.clear();
-      pending.clear();
+    async leave() {
+      // Mark 'leaving' BEFORE awaiting: trystero keeps the room in its own cache
+      // until teardown completes, so any join in that window aliases the corpse.
+      // The registry entry is what turns that silent trap into a thrown error.
+      registry.set(key, 'leaving');
+      try {
+        await room.leave();
+      } finally {
+        registry.delete(key);
+        chans.clear();
+        pending.clear();
+      }
     },
   };
 }

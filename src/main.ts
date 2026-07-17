@@ -19,12 +19,12 @@ import { createSfx } from './engine/sound';
 import { createStore } from './engine/storage';
 import { createInput, type Input } from './engine/input';
 import { createNet, type Net } from './engine/net';
+import { createRounds, type RoundPlayer, type Rounds } from './engine/rematch';
 import {
   createLobby,
   createRoomEntry,
   normalizeRoomCode,
   setRoomInUrl,
-  type LobbyPlayer,
 } from './engine/lobby';
 import { NetRoyale, type NetUpdate, type Phase } from './net-game';
 import { CanvasView, SNAKE_COLORS } from './render';
@@ -54,8 +54,12 @@ app.innerHTML = `<main class="main-content" id="content"></main>${FOOTER_HTML}`;
 const content = document.getElementById('content')!;
 
 let net: Net | null = null;
+let rounds: Rounds | null = null;
+let lobby: { destroy: () => void } | null = null;
 let activeNet: NetRoyale | null = null;
 let session: GameSession | null = null;
+/** Rounds won per peer id, kept across rematches for as long as the room lives. */
+let tally = new Map<string, number>();
 
 const unlockOnce = () => {
   sfx.unlock();
@@ -93,6 +97,8 @@ interface Driver {
   mySeat(): number;
   names(): string[];
   colors(): number[];
+  /** Peer id per seat (MP only) — lets the results tally survive a rematch. */
+  ids?(): string[];
   tickMs(): number;
   play(dir: Dir): void;
   setUpdate(cb: (u: NetUpdate) => void): void;
@@ -216,10 +222,7 @@ class MpDriver implements Driver {
   private cb: (u: NetUpdate) => void = () => {};
   private ng!: NetRoyale;
 
-  constructor(
-    private _names: string[],
-    private _colors: number[],
-  ) {}
+  constructor(private roster: RoundPlayer[]) {}
 
   attach(ng: NetRoyale) {
     this.ng = ng;
@@ -240,10 +243,13 @@ class MpDriver implements Driver {
     return this.ng.mySeat();
   }
   names() {
-    return this._names;
+    return this.roster.map((p) => p.name);
   }
   colors() {
-    return this._colors;
+    return this.roster.map((_, i) => i);
+  }
+  ids() {
+    return this.roster.map((p) => p.id);
   }
   tickMs() {
     return MP_TICK;
@@ -290,6 +296,7 @@ class GameSession {
   private resultsShown = false;
   private lastCount = 99;
   private banner!: HTMLElement;
+  private startedAt = performance.now();
 
   constructor(private driver: Driver) {
     this.render();
@@ -412,6 +419,7 @@ class GameSession {
     this.resultsShown = false;
     this.hideOverlay();
     this.lastCount = 99;
+    this.startedAt = performance.now();
     this.driver.restart?.();
     this.view.resync(this.driver.getState());
     const b = document.getElementById('pauseBtn');
@@ -560,14 +568,55 @@ class GameSession {
       sfx.play(win === me || me < 0 ? 'win' : 'lose');
     }
 
+    const ids = this.driver.ids?.() ?? [];
+
+    // The round is done — reopen voting so "Play again" has something to say.
+    if (!solo) {
+      rounds?.finish();
+      const winId = ids[state.winner];
+      if (winId) tally.set(winId, (tally.get(winId) ?? 0) + 1);
+    }
+
     const ranked = ranking(state);
     const best = store.get('best', 0);
+    const showTally = !solo && [...tally.values()].some((n) => n > 0);
+
+    /** Seconds this snake lasted. MP ticks at a fixed MP_TICK; solo's tick ramps
+     *  with the score, so only the wall clock is honest there. */
+    const secs = (seat: number): number => {
+      const s = state.snakes[seat];
+      if (solo) return (performance.now() - this.startedAt) / 1000;
+      return ((s.alive ? state.tick : s.deadAt) * MP_TICK) / 1000;
+    };
+    const nameOf = (seat: number): string => names[seat] ?? `P${seat + 1}`;
+    const fate = (seat: number): string => {
+      const s = state.snakes[seat];
+      if (s.alive) return solo ? 'Survived' : 'Last snake slithering';
+      switch (s.death) {
+        case 'self':
+          return 'Bit its own tail';
+        case 'body':
+          return `Cut off by ${escapeHtml(nameOf(s.killedBy))}`;
+        case 'head':
+          return `Head-on with ${escapeHtml(nameOf(s.killedBy))}`;
+        default:
+          return 'Hit the wall';
+      }
+    };
+
     const overlay = document.createElement('div');
     overlay.className = 'results-overlay';
     overlay.innerHTML = `
       <div class="results" role="dialog" aria-modal="true" aria-label="Results">
         <h2 class="results-title">${headline}</h2>
         ${solo ? `<p class="results-best">Best: ${best}</p>` : ''}
+        ${
+          showTally
+            ? `<p class="results-tally">Rounds won · ${ids
+                .map((id, seat) => `<span>${escapeHtml(nameOf(seat))} ${tally.get(id) ?? 0}</span>`)
+                .join(' · ')}</p>`
+            : ''
+        }
         <ul class="results-list">
           ${ranked
             .map((seat, i) => {
@@ -575,30 +624,76 @@ class GameSession {
               return `<li class="result-row ${seat === me ? 'me' : ''}">
                 <span class="result-rank">${i + 1}</span>
                 <span class="result-dot" style="background:${SNAKE_COLORS[s.color % 6]}"></span>
-                <span class="result-name">${escapeHtml(names[seat] ?? `P${seat + 1}`)}${seat === me ? ' (you)' : ''}</span>
+                <span class="result-main">
+                  <span class="result-name">${escapeHtml(nameOf(seat))}${seat === me ? ' (you)' : ''}</span>
+                  <span class="result-fate">${fate(seat)}</span>
+                </span>
+                <span class="result-stats">
+                  <span class="result-stat"><b>${s.body.length}</b> long</span>
+                  <span class="result-stat"><b>${s.score}</b> pellet${s.score === 1 ? '' : 's'}</span>
+                  <span class="result-stat"><b>${secs(seat).toFixed(1)}s</b> alive</span>
+                </span>
                 <span class="result-score">${s.score}</span>
               </li>`;
             })
             .join('')}
         </ul>
         <div class="results-actions">
-          <button class="btn btn-primary" data-act="again">${solo ? 'Play again' : 'Back to menu'}</button>
+          <button class="btn btn-primary" data-act="again">Play again</button>
           <button class="btn" data-act="share">Share</button>
-          ${solo ? '<button class="btn btn-ghost" data-act="menu">Menu</button>' : ''}
+          <button class="btn btn-ghost" data-act="menu">Menu</button>
         </div>
+        <p class="results-ready" role="status" aria-live="polite"></p>
       </div>`;
     content.querySelector('.game')?.appendChild(overlay);
 
-    overlay.querySelector('[data-act="again"]')?.addEventListener('click', () => {
-      overlay.remove();
-      if (solo) this.doRestart();
-      else toMenu();
+    const againBtn = overlay.querySelector<HTMLButtonElement>('[data-act="again"]')!;
+    const readyEl = overlay.querySelector<HTMLElement>('.results-ready')!;
+
+    againBtn.addEventListener('click', () => {
+      if (solo) {
+        overlay.remove();
+        this.doRestart();
+        return;
+      }
+      // NOT a rejoin. The room and the whole peer mesh stay exactly as they are;
+      // this only registers a vote, and the next arena starts underneath us once
+      // everyone has voted. Leaving and rejoining here is what used to strand
+      // both players alone as host — see engine/net.ts.
+      if (!rounds) return;
+      if (rounds.state().voted) rounds.unvote();
+      else rounds.vote();
+      paintReady();
     });
     overlay.querySelector('[data-act="menu"]')?.addEventListener('click', () => toMenu());
     overlay.querySelector('[data-act="share"]')?.addEventListener('click', () => {
       const score = state.snakes[me >= 0 ? me : 0]?.score ?? 0;
       void shareResult(solo, score, state.winner === me);
     });
+
+    function paintReady(): void {
+      if (solo || !rounds) return;
+      const s = rounds.state();
+      againBtn.textContent = s.voted ? 'Ready — waiting…' : 'Play again';
+      againBtn.classList.toggle('waiting', s.voted);
+      const waiting = s.present.length - s.votes.length;
+      readyEl.textContent = s.voted
+        ? waiting > 0
+          ? `Waiting for ${waiting} more player${waiting === 1 ? '' : 's'}…`
+          : 'Starting…'
+        : `${s.votes.length}/${s.present.length} ready for another round`;
+    }
+
+    if (!solo) {
+      paintReady();
+      const tick = setInterval(() => {
+        if (!document.body.contains(againBtn)) {
+          clearInterval(tick);
+          return;
+        }
+        paintReady();
+      }, 500);
+    }
   }
 
   destroy() {
@@ -659,15 +754,35 @@ function cleanupSession(): void {
   session = null;
 }
 
-function cleanupMp(): void {
+/** Resolves once any in-flight room teardown has fully finished. */
+let roomTeardown: Promise<void> = Promise.resolve();
+
+/**
+ * Tear the room down for good. Only ever called on the way to the menu — NEVER
+ * between rounds. `net.leave()` is awaited because Trystero keeps the room in
+ * its cache until teardown finishes; joining again before then hands back the
+ * dying room and every peer ends up alone and self-elected as host. Rematches
+ * keep the Net alive and start a new round inside it (engine/rematch.ts).
+ */
+function leaveRoom(): Promise<void> {
+  lobby?.destroy();
+  lobby = null;
+  rounds?.destroy();
+  rounds = null;
   activeNet?.destroy();
   activeNet = null;
-  try {
-    net?.leave();
-  } catch {
-    /* ignore */
-  }
+  tally = new Map();
+  const leaving = net;
   net = null;
+  // CHAIN, never replace. leaveRoom() runs again on the way into a new room, and
+  // by then `net` is already null — replacing the promise there would hand back
+  // an instantly-resolved teardown while the real one was still inside
+  // Trystero's 99ms window, and the next createNet would throw.
+  roomTeardown = roomTeardown.then(() => leaving?.leave()).then(
+    () => undefined,
+    () => undefined,
+  );
+  return roomTeardown;
 }
 
 function stripRoomParam(): void {
@@ -680,7 +795,7 @@ function stripRoomParam(): void {
 
 function toMenu(): void {
   cleanupSession();
-  cleanupMp();
+  void leaveRoom();
   stripRoomParam();
   renderMenu();
 }
@@ -712,15 +827,15 @@ function renderMenu(): void {
 
 function startSolo(): void {
   cleanupSession();
-  cleanupMp();
+  void leaveRoom();
   session = new GameSession(new SoloDriver());
 }
 
 function enterFriends(): void {
-  cleanupMp();
+  void leaveRoom();
   const deep = normalizeRoomCode(new URL(location.href).searchParams.get('room') ?? '');
   if (deep.length >= 3) {
-    openRoom(deep);
+    void openRoom(deep);
     return;
   }
   content.innerHTML = friendsSetupHTML();
@@ -728,22 +843,52 @@ function enterFriends(): void {
   createRoomEntry({
     container: document.getElementById('entryMount')!,
     subtitle: 'Start a new room, or enter a friend’s code to join theirs.',
-    onSubmit: (code) => openRoom(code),
+    onSubmit: (code) => void openRoom(code),
   });
 }
 
-function openRoom(code: string): void {
+/**
+ * Join a room ONCE and hold it for as long as the player stays. Every arena —
+ * the first and every rematch — runs inside this one Net via `rounds`. Nothing
+ * here may call net.leave() except the trip back to the menu.
+ */
+async function openRoom(code: string): Promise<void> {
   cleanupSession();
-  cleanupMp();
+  leaveRoom();
+  // A previous room may still be tearing down (Trystero defers it ~99ms).
+  // Joining inside that window returns the dying room, so wait it out.
+  await roomTeardown;
   setRoomInUrl(code);
-  net = createNet(
-    { appId: APP_ID, roomId: code },
-    {
-      onHostChange: (_id, isSelf) => activeNet?.setHost(isSelf),
-      onPeers: () => activeNet?.onRoster(),
-    },
-  );
 
+  try {
+    net = createNet(
+      { appId: APP_ID, roomId: code },
+      {
+        onHostChange: (_id, isSelf) => activeNet?.setHost(isSelf),
+        onPeers: () => activeNet?.onRoster(),
+      },
+    );
+  } catch (err) {
+    // The room is somehow still held (see engine/net.ts). Never strand the
+    // player on a blank screen — say so and go back somewhere they can act.
+    console.error(err);
+    flashToast('Could not open that room — try again');
+    toMenu();
+    return;
+  }
+
+  rounds = createRounds({
+    net,
+    playerName: playerName(),
+    minPlayers: 2,
+    onRound: ({ seed, players }) => enterMpGame(seed, players),
+  });
+
+  showLobby(code);
+}
+
+function showLobby(code: string): void {
+  if (!net || !rounds) return;
   content.innerHTML = `
     <section class="screen lobby-screen">
       <button class="back" data-act="back" aria-label="Back to menu">‹ Menu</button>
@@ -751,33 +896,41 @@ function openRoom(code: string): void {
     </section>`;
   content.querySelector('[data-act="back"]')?.addEventListener('click', toMenu);
 
-  const mount = document.getElementById('lobbyMount')!;
-  const lobby = createLobby({
-    container: mount,
+  lobby = createLobby({
+    container: document.getElementById('lobbyMount')!,
     net,
+    rounds,
     roomCode: code,
-    playerName: playerName(),
     minPlayers: 2,
     maxPlayers: 6,
-    onStart: (info) => {
-      lobby.destroy();
-      enterMpGame(info.seed, info.players);
-    },
   });
 }
 
-function enterMpGame(seed: number, players: LobbyPlayer[]): void {
-  const seated = [...players].sort((a, b) => a.id.localeCompare(b.id));
-  const seats = seated.map((p) => p.id);
-  const names = seated.map((p) => p.name);
-  const colors = seated.map((_, i) => i);
-  const driver = new MpDriver(names, colors);
+function enterMpGame(seed: number, players: RoundPlayer[]): void {
+  if (!net) return;
+  lobby?.destroy();
+  lobby = null;
+
+  // The roster arrives FROZEN from the host — identical bytes on every peer — so
+  // seat N is the same player everywhere. Re-deriving or re-sorting it locally
+  // is how two peers used to disagree about who was which snake.
+  const seats = players.map((p) => p.id);
+  if (!seats.includes(net.selfId)) {
+    // Not in this round's roster (we joined mid-start). Wait for the next one
+    // rather than silently playing as seat 0.
+    showLobby(new URL(location.href).searchParams.get('room') ?? '');
+    flashToast('Next round — you’re in the lobby');
+    return;
+  }
+
+  const driver = new MpDriver(players);
+  activeNet?.destroy();
   activeNet = new NetRoyale({
-    net: net!,
+    net,
     seed,
     grid: GRID,
     seats,
-    players: seated.map((p, i) => ({ name: p.name, color: i })),
+    players: players.map((p, i) => ({ name: p.name, color: i })),
     tickMs: MP_TICK,
     onUpdate: (u) => driver.forward(u),
   });

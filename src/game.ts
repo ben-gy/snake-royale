@@ -20,6 +20,9 @@ export interface Cell {
   y: number;
 }
 
+/** How a snake ended. Recorded purely so the results screen can tell the story. */
+export type DeathCause = 'wall' | 'self' | 'body' | 'head';
+
 export interface Snake {
   /** Seat index — stable, matches the sorted peer roster. */
   id: number;
@@ -38,6 +41,10 @@ export interface Snake {
   score: number;
   /** Tick this snake died on (-1 if alive) — used to rank the results. */
   deadAt: number;
+  /** What ended it; null while alive. */
+  death: DeathCause | null;
+  /** Seat that ended it, or -1 for a wall / its own body. */
+  killedBy: number;
 }
 
 export type Mode = 'solo' | 'royale';
@@ -121,6 +128,8 @@ export function spawnSnakes(grid: number, specs: { name: string; color: number }
       grow: 0,
       score: 0,
       deadAt: -1,
+      death: null,
+      killedBy: -1,
     };
   });
 }
@@ -229,10 +238,16 @@ export function stepRoyale(state: RoyaleState, rng: Rng): StepEvents {
   //    any snake body cell (its own tail vacates unless it's growing this tick),
   //    or two new heads collide (head-to-head → both die).
   const dead = new Set<number>();
+  /** seat -> how it ended. First cause wins; only feeds the results breakdown. */
+  const cause = new Map<number, { death: DeathCause; by: number }>();
+  const kill = (seat: number, death: DeathCause, by: number): void => {
+    dead.add(seat);
+    if (!cause.has(seat)) cause.set(seat, { death, by });
+  };
   for (const s of alive) {
     const h = newHeads.get(s.id)!;
     if (h.x < 0 || h.y < 0 || h.x >= state.grid || h.y >= state.grid) {
-      dead.add(s.id);
+      kill(s.id, 'wall', -1);
       continue;
     }
     for (const t of alive) {
@@ -250,7 +265,8 @@ export function stepRoyale(state: RoyaleState, rng: Rng): StepEvents {
           continue;
         }
         if (cells[i].x === h.x && cells[i].y === h.y) {
-          dead.add(s.id);
+          const mine = t.id === s.id;
+          kill(s.id, mine ? 'self' : 'body', mine ? -1 : t.id);
           break;
         }
       }
@@ -265,7 +281,7 @@ export function stepRoyale(state: RoyaleState, rng: Rng): StepEvents {
     (headTargets.get(k) ?? headTargets.set(k, []).get(k)!).push(s.id);
   }
   for (const ids of headTargets.values()) {
-    if (ids.length > 1) for (const id of ids) dead.add(id);
+    if (ids.length > 1) for (const id of ids) kill(id, 'head', ids.find((o) => o !== id) ?? -1);
   }
 
   // 4. Apply movement for survivors; kill the rest and scatter pellets.
@@ -298,6 +314,9 @@ export function stepRoyale(state: RoyaleState, rng: Rng): StepEvents {
     if (!dead.has(s.id)) continue;
     s.alive = false;
     s.deadAt = state.tick;
+    const c = cause.get(s.id);
+    s.death = c?.death ?? 'wall';
+    s.killedBy = c?.by ?? -1;
     events.died.push(s.id);
     if (state.mode === 'royale') {
       for (let i = 0; i < s.body.length; i += 3) {

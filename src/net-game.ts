@@ -6,15 +6,21 @@
  * backgrounded and is verifiable headlessly), and broadcasts a full snapshot
  * each tick. Clients send only their direction intent and render snapshots.
  *
- * Host transfer (the multiplayer contract's gate #2): net.ts re-elects the
- * smallest remaining peer the instant the host drops and calls onHostChange →
- * setHost(true). The promoted peer already holds the last snapshot; it adopts it
- * as canonical, re-broadcasts, and resumes the host-only timers, so the round
- * keeps advancing and can still reach game-over. A dropped seat's snake simply
- * keeps moving straight until it crashes — the sim never stalls.
+ * AUTHORITY FOLLOWS THE FROZEN ROSTER, NOT net.host(). net.ts elects the
+ * smallest id in the *room*, which includes people who wandered in after the
+ * countdown. Deferring to it meant a mid-round joiner with a small id was
+ * elected host by everyone, and it holds no NetRoyale at all — so the real host
+ * stood down, nobody broadcast a snapshot, and the arena froze for the whole
+ * room, permanently. The round's host is instead the smallest id among the seats
+ * that are STILL HERE (roundHost below): a peer outside `seats` is a spectator
+ * and can never host this round, while a seated player leaving still hands over
+ * to the next seated player. The promoted peer already holds the last snapshot;
+ * it adopts it as canonical, re-broadcasts, and resumes the host-only timers, so
+ * the round keeps advancing and can still reach game-over. A dropped seat's
+ * snake simply keeps moving straight until it crashes — the sim never stalls.
  */
 
-import type { Net, PeerId } from './engine/net';
+import type { Net, PeerId, Unsubscribe } from './engine/net';
 import { makeRng, type Rng } from './engine/rng';
 import {
   createRoyale,
@@ -77,9 +83,9 @@ export class NetRoyale {
   private countTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
 
-  private sendIn: (d: { dir: Dir }, to?: PeerId | PeerId[]) => void;
-  private sendSnap: (d: Snapshot, to?: PeerId | PeerId[]) => void;
-  private reqSync: (d: null, to?: PeerId | PeerId[]) => void;
+  private sendIn: ((d: { dir: Dir }, to?: PeerId | PeerId[]) => void) & { off: Unsubscribe };
+  private sendSnap: ((d: Snapshot, to?: PeerId | PeerId[]) => void) & { off: Unsubscribe };
+  private reqSync: ((d: null, to?: PeerId | PeerId[]) => void) & { off: Unsubscribe };
 
   constructor(cfg: NetRoyaleConfig) {
     this.net = cfg.net;
@@ -98,13 +104,16 @@ export class NetRoyale {
     });
 
     this.sendIn = this.net.channel<{ dir: Dir }>('in', (data, from) => {
-      if (!this.net.isHost()) return;
+      if (!this.amHost()) return;
       const seat = this.seats.indexOf(from);
       if (seat >= 0) setDir(this.state, seat, data.dir);
     });
 
-    this.sendSnap = this.net.channel<Snapshot>('snap', (snap) => {
-      if (this.net.isHost()) return; // host is the source of truth
+    this.sendSnap = this.net.channel<Snapshot>('snap', (snap, from) => {
+      if (this.amHost()) return; // host is the source of truth
+      // Only this round's host may rewrite our state. Without this, a spectator
+      // or a peer still holding a finished round could overwrite a live arena.
+      if (from !== this.roundHost()) return;
       this.state = snap.state;
       this.phase = snap.phase;
       this.count = snap.count;
@@ -112,15 +121,30 @@ export class NetRoyale {
     });
 
     this.reqSync = this.net.channel<null>('sync', (_d, from) => {
-      if (this.net.isHost()) this.sendSnap(this.snapshot(), from);
+      if (this.amHost()) this.sendSnap(this.snapshot(), from);
     });
 
-    if (this.net.isHost()) {
+    if (this.amHost()) {
       this.startHosting(true);
     } else {
       this.reqSync(null);
     }
     this.emit(NO_EVENTS);
+  }
+
+  /**
+   * The authority for THIS round: the smallest seated peer still in the room.
+   * Derived from the frozen roster, so a mid-round joiner — who has no NetRoyale
+   * and could never drive the sim — is never elected and the arena cannot stall.
+   */
+  private roundHost(): PeerId | null {
+    const here = new Set(this.net.peers());
+    const live = this.seats.filter((id) => here.has(id));
+    return live.length ? live.reduce((min, p) => (p < min ? p : min)) : null;
+  }
+
+  private amHost(): boolean {
+    return this.roundHost() === this.net.selfId;
   }
 
   // --- public surface ------------------------------------------------------
@@ -146,37 +170,46 @@ export class NetRoyale {
     const seat = this.mySeat();
     if (seat < 0 || this.phase === 'over') return;
     setDir(this.state, seat, dir); // optimistic — corrected by next snapshot
-    if (this.net.isHost()) {
+    if (this.amHost()) {
       // already applied to canonical state above
     } else {
-      this.sendIn({ dir }, this.net.host());
+      const host = this.roundHost();
+      if (host) this.sendIn({ dir }, host);
     }
   }
 
   /** Test/host helper: steer an arbitrary seat (host only). */
   steer(seat: number, dir: Dir): void {
-    if (this.net.isHost()) setDir(this.state, seat, dir);
+    if (this.amHost()) setDir(this.state, seat, dir);
   }
 
-  /** Wired to net.onHostChange. Becoming host mid-round = the takeover. */
-  setHost(isSelfHost: boolean): void {
+  /** Wired to net.onHostChange. Becoming this round's host = the takeover. */
+  setHost(_isSelfHost: boolean): void {
+    // The room's elected host is only a hint — recheck against the frozen
+    // roster, which is what actually decides who drives this round.
+    this.refreshAuthority();
+  }
+
+  /** Roster changed — a seat may have dropped, so re-run the round election.
+   *  Dropped seats' snakes just coast straight into a wall; the sim never stalls. */
+  onRoster(): void {
+    this.refreshAuthority();
+  }
+
+  private refreshAuthority(): void {
     if (this.destroyed) return;
-    if (isSelfHost && !this.hosting) {
+    const mine = this.amHost();
+    if (mine && !this.hosting) {
       this.startHosting(false);
       this.emit(NO_EVENTS, true);
-    } else if (!isSelfHost && this.hosting) {
+    } else if (!mine && this.hosting) {
       this.stopHosting();
     }
   }
 
-  /** Roster changed — nothing special needed; dropped seats coast into walls. */
-  onRoster(): void {
-    /* host keeps ticking; disconnected snakes coast straight and die */
-  }
-
   /** One authoritative tick. Public so tests can drive it without timers. */
   hostTick(): void {
-    if (this.destroyed || !this.net.isHost()) return;
+    if (this.destroyed || !this.amHost()) return;
     if (this.phase !== 'play' || this.state.over) return;
     const events = stepRoyale(this.state, this.rng);
     if (this.state.over) this.phase = 'over';
@@ -186,7 +219,7 @@ export class NetRoyale {
 
   /** One countdown step. Public for tests. */
   hostCountStep(): void {
-    if (this.destroyed || !this.net.isHost() || this.phase !== 'count') return;
+    if (this.destroyed || !this.amHost() || this.phase !== 'count') return;
     this.count--;
     if (this.count <= 0) {
       this.phase = 'play';
@@ -203,6 +236,14 @@ export class NetRoyale {
   destroy(): void {
     this.destroyed = true;
     this.stopHosting();
+    // MANDATORY. The Net now outlives the round (it spans the room's whole life)
+    // and net.channel() fans out rather than memoizing, so leaving these
+    // attached means every finished round STACKS another 'in'/'snap' receiver on
+    // the live one: the old host resolves the new round's inputs against its
+    // dead state and broadcasts snapshots of a finished arena over the real one.
+    this.sendIn.off();
+    this.sendSnap.off();
+    this.reqSync.off();
   }
 
   // --- host internals ------------------------------------------------------

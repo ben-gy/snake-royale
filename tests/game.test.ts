@@ -27,6 +27,8 @@ function snake(id: number, body: Cell[], dir: Dir): Snake {
     dir,
     pending: dir,
     alive: true,
+    death: null,
+    killedBy: -1,
     grow: 0,
     score: 0,
     deadAt: -1,

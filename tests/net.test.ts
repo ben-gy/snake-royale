@@ -13,21 +13,30 @@ import type { RoyaleState, Snake } from '../src/game';
 
 class FakeNet implements Net {
   readonly selfId: PeerId;
-  private _isHost: boolean;
   private roster: PeerId[];
-  private handlers = new Map<string, (d: unknown, from: PeerId) => void>();
+  /** Fan-out, mirroring the real net.ts — one name may have many receivers. */
+  private handlers = new Map<string, Set<(d: unknown, from: PeerId) => void>>();
+  sent: { name: string; data: unknown }[] = [];
 
-  constructor(selfId: PeerId, isHost: boolean, roster: PeerId[]) {
+  constructor(selfId: PeerId, roster: PeerId[]) {
     this.selfId = selfId;
-    this._isHost = isHost;
     this.roster = roster;
   }
-  setHost(v: boolean) {
-    this._isHost = v;
+  /** A peer drops out of the room. */
+  part(id: PeerId) {
+    this.roster = this.roster.filter((p) => p !== id);
+  }
+  /** A peer wanders in — e.g. mid-round, with an id small enough to win an
+   *  unguarded election. */
+  arrive(id: PeerId) {
+    this.roster = [...this.roster, id];
   }
   /** Simulate a message arriving on a channel from a peer. */
   deliver(name: string, data: unknown, from: PeerId) {
-    this.handlers.get(name)?.(data, from);
+    for (const h of [...(this.handlers.get(name) ?? [])]) h(data, from);
+  }
+  receiverCount(name: string) {
+    return this.handlers.get(name)?.size ?? 0;
   }
   peers() {
     return [...this.roster].sort();
@@ -36,19 +45,27 @@ class FakeNet implements Net {
     return this.peers()[0];
   }
   isHost() {
-    return this._isHost;
+    return this.host() === this.selfId;
   }
   count() {
     return this.roster.length;
   }
   channel<T>(name: string, onReceive: (d: T, from: PeerId) => void) {
-    this.handlers.set(name, onReceive as (d: unknown, from: PeerId) => void);
-    return (_d: T, _to?: PeerId | PeerId[]) => {};
+    const h = onReceive as (d: unknown, from: PeerId) => void;
+    if (!this.handlers.has(name)) this.handlers.set(name, new Set());
+    this.handlers.get(name)!.add(h);
+    const send = ((data: T, _to?: PeerId | PeerId[]) => {
+      this.sent.push({ name, data });
+    }) as ((data: T, to?: PeerId | PeerId[]) => void) & { off: () => void };
+    send.off = () => {
+      this.handlers.get(name)!.delete(h);
+    };
+    return send;
   }
   ping() {
     return Promise.resolve(0);
   }
-  leave() {}
+  async leave() {}
 }
 
 function craftedTwoSnake(): RoyaleState {
@@ -63,6 +80,8 @@ function craftedTwoSnake(): RoyaleState {
     grow: 0,
     score: 0,
     deadAt: -1,
+    death: null,
+    killedBy: -1,
   });
   return {
     grid: 22,
@@ -83,7 +102,7 @@ function craftedTwoSnake(): RoyaleState {
 
 describe('host transfer takeover (contract gate #2)', () => {
   it('a client does not advance the sim; a promoted client drives it to game-over', () => {
-    const fake = new FakeNet('peerB', false, ['peerA', 'peerB']);
+    const fake = new FakeNet('peerB', ['peerA', 'peerB']);
     const ng = new NetRoyale({
       net: fake,
       seed: 123,
@@ -109,9 +128,9 @@ describe('host transfer takeover (contract gate #2)', () => {
     expect(ng.getState().tick).toBe(tickBefore);
     expect(ng.getState().over).toBe(false);
 
-    // The old host leaves → this peer is promoted.
-    fake.setHost(true);
-    ng.setHost(true);
+    // The old host leaves the room → this peer is the smallest seat still here.
+    fake.part('peerA');
+    ng.onRoster();
 
     // Now it must actually run the sim and be able to finish.
     let guard = 30;
@@ -126,7 +145,7 @@ describe('host transfer takeover (contract gate #2)', () => {
   });
 
   it('a fresh host runs its own countdown then plays', () => {
-    const fake = new FakeNet('peerA', true, ['peerA', 'peerB']);
+    const fake = new FakeNet('peerA', ['peerA', 'peerB']);
     const ng = new NetRoyale({
       net: fake,
       seed: 7,
