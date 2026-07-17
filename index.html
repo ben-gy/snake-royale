@@ -8,7 +8,19 @@
     <meta property="og:title" content="Snake Royale" />
     <meta property="og:description" content="Classic snake, but 2–6 snakes share one arena — eat, grow, cut rivals off; last snake slithering wins." />
     <meta property="og:type" content="website" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <!-- Home-screen install. Paths are RELATIVE to the document: this game is
+         served from a project subpath in dev and from a custom domain root in
+         prod, and a leading slash only resolves in the second. -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#0b0e14" />
+    <!-- iOS ignores the manifest's icons entirely, so it gets its own set. The
+         apple-touch-icon must be opaque — iOS composites transparency on black. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Snake Royale" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <title>Snake Royale</title>
     <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "ba2bab2193ba42c1bea3d6714fcd0e28"}'></script>
   </head>

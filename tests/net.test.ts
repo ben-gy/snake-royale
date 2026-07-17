@@ -41,11 +41,14 @@ class FakeNet implements Net {
   peers() {
     return [...this.roster].sort();
   }
-  host() {
-    return this.peers()[0];
+  host(): PeerId | null {
+    return this.peers()[0] ?? null;
   }
   isHost() {
     return this.host() === this.selfId;
+  }
+  hostSettled() {
+    return true;
   }
   count() {
     return this.roster.length;

@@ -4,8 +4,8 @@
  * stray spaces/dashes) must normalize to the exact Trystero room id the link
  * carries — else the two players silently land in different rooms.
  */
-import { describe, expect, it } from 'vitest';
-import { normalizeRoomCode } from '../src/engine/lobby';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { clearRoomInUrl, inviteLink, normalizeRoomCode, setRoomInUrl } from '../src/engine/lobby';
 
 describe('normalizeRoomCode', () => {
   it('upper-cases so a typed code matches the host link', () => {
@@ -25,5 +25,33 @@ describe('normalizeRoomCode', () => {
   it('is idempotent — a link code normalizes to itself', () => {
     const c = normalizeRoomCode('Mint9Z');
     expect(normalizeRoomCode(c)).toBe(c);
+  });
+});
+
+describe('the room in the URL', () => {
+  beforeEach(() => {
+    history.replaceState(null, '', '/');
+  });
+
+  it('setRoomInUrl makes the page reloadable back into the room', () => {
+    setRoomInUrl('K7QP');
+    expect(new URL(location.href).searchParams.get('room')).toBe('K7QP');
+    expect(inviteLink('K7QP')).toContain('room=K7QP');
+  });
+
+  it('clearRoomInUrl drops it on the way out', () => {
+    // Without this the code outlives the session: reopening the page — from
+    // history, or the home-screen icon — silently drags you back into a room you
+    // left, with no way to start a fresh one. "It always spawns the same game
+    // room no matter what."
+    setRoomInUrl('K7QP');
+    clearRoomInUrl();
+    expect(new URL(location.href).searchParams.has('room')).toBe(false);
+  });
+
+  it('clearRoomInUrl leaves an unrelated URL alone', () => {
+    history.replaceState(null, '', '/?utm=x');
+    clearRoomInUrl();
+    expect(new URL(location.href).searchParams.get('utm')).toBe('x');
   });
 });

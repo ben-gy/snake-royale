@@ -5,6 +5,7 @@
  * Heavy rules live in game.ts; netcode in net-game.ts; drawing in render.ts.
  */
 
+import './styles/mobile.css';
 import './styles/main.css';
 import {
   createRoyale,
@@ -18,9 +19,11 @@ import { makeRng, newSeed, type Rng } from './engine/rng';
 import { createSfx } from './engine/sound';
 import { createStore } from './engine/storage';
 import { createInput, type Input } from './engine/input';
+import { hardenViewport } from './engine/mobile';
 import { createNet, type Net } from './engine/net';
 import { createRounds, type RoundPlayer, type Rounds } from './engine/rematch';
 import {
+  clearRoomInUrl,
   createLobby,
   createRoomEntry,
   normalizeRoomCode,
@@ -43,6 +46,11 @@ const GRID = 22;
 const MP_TICK = 110;
 const NAME_POOL = ['Fox', 'Wren', 'Sage', 'Koi', 'Lark', 'Bea', 'Nova', 'Pip', 'Ozzy', 'Rio'];
 
+// Before anything renders: iOS ignores the viewport meta's user-scalable=no, so
+// a double-tap or a pinch zooms a live arena with no way back out — and steering
+// a snake is all fast repeated taps and swipes.
+hardenViewport();
+
 const store = createStore(APP_ID);
 const settings = { muted: store.get('muted', false) };
 const sfx = createSfx(settings.muted);
@@ -60,6 +68,17 @@ let activeNet: NetRoyale | null = null;
 let session: GameSession | null = null;
 /** Rounds won per peer id, kept across rematches for as long as the room lives. */
 let tally = new Map<string, number>();
+
+// An invite link's ?room= is read ONCE, at boot, and honoured once. It cannot be
+// read later from the URL: leaveRoom() clears the parameter on the way out of a
+// room (so a reload does not silently rejoin), and "Play with friends" leaves
+// any old room before it opens the next one — so by the time it looked, the code
+// it wanted was already gone and every invite link fell through to the
+// create/join screen.
+let pendingRoom: string | null = (() => {
+  const c = normalizeRoomCode(new URL(location.href).searchParams.get('room') ?? '');
+  return c.length >= 3 ? c : null;
+})();
 
 const unlockOnce = () => {
   sfx.unlock();
@@ -640,6 +659,8 @@ class GameSession {
         </ul>
         <div class="results-actions">
           <button class="btn btn-primary" data-act="again">Play again</button>
+          ${solo ? '' : '<button class="btn" data-act="startnow" hidden>Start now</button>'}
+          ${solo ? '' : '<button class="btn" data-act="lobby">Back to lobby</button>'}
           <button class="btn" data-act="share">Share</button>
           <button class="btn btn-ghost" data-act="menu">Menu</button>
         </div>
@@ -665,6 +686,14 @@ class GameSession {
       else rounds.vote();
       paintReady();
     });
+    overlay.querySelector('[data-act="startnow"]')?.addEventListener('click', () => rounds?.go());
+    overlay.querySelector('[data-act="lobby"]')?.addEventListener('click', () => {
+      // Back to the lobby WITHOUT leaving the room — the mesh, the roster and the
+      // running tally all survive. From there you can wait, re-ready, or see who
+      // is still around, instead of the summary being a dead end with only Menu.
+      rounds?.unvote();
+      backToLobby();
+    });
     overlay.querySelector('[data-act="menu"]')?.addEventListener('click', () => toMenu());
     overlay.querySelector('[data-act="share"]')?.addEventListener('click', () => {
       const score = state.snakes[me >= 0 ? me : 0]?.score ?? 0;
@@ -676,12 +705,27 @@ class GameSession {
       const s = rounds.state();
       againBtn.textContent = s.voted ? 'Ready — waiting…' : 'Play again';
       againBtn.classList.toggle('waiting', s.voted);
+
+      // The host never has to sit and hope: once enough snakes are in, it can
+      // tee off immediately rather than wait out the countdown.
+      const startNow = overlay.querySelector<HTMLButtonElement>('[data-act="startnow"]');
+      if (startNow) startNow.hidden = !s.canStart || s.votes.length === s.present.length;
+
       const waiting = s.present.length - s.votes.length;
-      readyEl.textContent = s.voted
-        ? waiting > 0
-          ? `Waiting for ${waiting} more player${waiting === 1 ? '' : 's'}…`
-          : 'Starting…'
-        : `${s.votes.length}/${s.present.length} ready for another round`;
+      const secs = s.startsInMs !== null ? Math.ceil(s.startsInMs / 1000) : null;
+      if (!s.voted) {
+        readyEl.textContent = `${s.votes.length}/${s.present.length} ready for another round`;
+      } else if (secs !== null) {
+        // Say WHY we are still waiting and when it ends. A bare "waiting…" with
+        // no horizon is what made this feel like a hang.
+        readyEl.textContent = `Starting in ${secs}s — waiting for ${waiting} more player${
+          waiting === 1 ? '' : 's'
+        }`;
+      } else if (waiting > 0) {
+        readyEl.textContent = `Waiting for ${waiting} more player${waiting === 1 ? '' : 's'}…`;
+      } else {
+        readyEl.textContent = 'Starting…';
+      }
     }
 
     if (!solo) {
@@ -772,6 +816,9 @@ function leaveRoom(): Promise<void> {
   activeNet?.destroy();
   activeNet = null;
   tally = new Map();
+  // The room is over for us — take it out of the URL so a refresh, or reopening
+  // from the home-screen icon, lands on the menu instead of silently rejoining.
+  clearRoomInUrl();
   const leaving = net;
   net = null;
   // CHAIN, never replace. leaveRoom() runs again on the way into a new room, and
@@ -785,18 +832,16 @@ function leaveRoom(): Promise<void> {
   return roomTeardown;
 }
 
-function stripRoomParam(): void {
-  const url = new URL(location.href);
-  if (url.searchParams.has('room')) {
-    url.searchParams.delete('room');
-    history.replaceState(null, '', url.toString());
-  }
+/** Leave the arena for the room's lobby, keeping the Net (and the tally) alive. */
+function backToLobby(): void {
+  cleanupSession();
+  activeNet = null; // the session's destroy() already tore the round's channels down
+  showLobby(new URL(location.href).searchParams.get('room') ?? '');
 }
 
 function toMenu(): void {
   cleanupSession();
   void leaveRoom();
-  stripRoomParam();
   renderMenu();
 }
 
@@ -833,9 +878,13 @@ function startSolo(): void {
 
 function enterFriends(): void {
   void leaveRoom();
-  const deep = normalizeRoomCode(new URL(location.href).searchParams.get('room') ?? '');
-  if (deep.length >= 3) {
-    void openRoom(deep);
+
+  // Deep-linked via an invite? Join it straight away, once. We are the guest
+  // here, never the host — the person who sent the link already holds the room.
+  if (pendingRoom) {
+    const code = pendingRoom;
+    pendingRoom = null;
+    void openRoom(code, false);
     return;
   }
   content.innerHTML = friendsSetupHTML();
@@ -843,7 +892,7 @@ function enterFriends(): void {
   createRoomEntry({
     container: document.getElementById('entryMount')!,
     subtitle: 'Start a new room, or enter a friend’s code to join theirs.',
-    onSubmit: (code) => void openRoom(code),
+    onSubmit: (code, created) => void openRoom(code, created),
   });
 }
 
@@ -852,7 +901,7 @@ function enterFriends(): void {
  * the first and every rematch — runs inside this one Net via `rounds`. Nothing
  * here may call net.leave() except the trip back to the menu.
  */
-async function openRoom(code: string): Promise<void> {
+async function openRoom(code: string, created: boolean): Promise<void> {
   cleanupSession();
   leaveRoom();
   // A previous room may still be tearing down (Trystero defers it ~99ms).
@@ -862,7 +911,10 @@ async function openRoom(code: string): Promise<void> {
 
   try {
     net = createNet(
-      { appId: APP_ID, roomId: code },
+      // `created` is the difference between minting this code and walking into
+      // someone else's room. Only the minter may host on arrival; a guest waits
+      // to hear from the incumbent instead of racing it for the role.
+      { appId: APP_ID, roomId: code, claimHost: created },
       {
         onHostChange: (_id, isSelf) => activeNet?.setHost(isSelf),
         onPeers: () => activeNet?.onRoster(),

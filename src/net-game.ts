@@ -6,18 +6,20 @@
  * backgrounded and is verifiable headlessly), and broadcasts a full snapshot
  * each tick. Clients send only their direction intent and render snapshots.
  *
- * AUTHORITY FOLLOWS THE FROZEN ROSTER, NOT net.host(). net.ts elects the
- * smallest id in the *room*, which includes people who wandered in after the
- * countdown. Deferring to it meant a mid-round joiner with a small id was
- * elected host by everyone, and it holds no NetRoyale at all — so the real host
- * stood down, nobody broadcast a snapshot, and the arena froze for the whole
- * room, permanently. The round's host is instead the smallest id among the seats
- * that are STILL HERE (roundHost below): a peer outside `seats` is a spectator
- * and can never host this round, while a seated player leaving still hands over
- * to the next seated player. The promoted peer already holds the last snapshot;
- * it adopts it as canonical, re-broadcasts, and resumes the host-only timers, so
- * the round keeps advancing and can still reach game-over. A dropped seat's
- * snake simply keeps moving straight until it crashes — the sim never stalls.
+ * AUTHORITY IS net.host(), CONSTRAINED TO THE FROZEN ROSTER. There is one answer
+ * to "who is host" — the room's incumbent (net.ts hands it over only when the
+ * host leaves) — and roundHost() below simply refuses to point at a peer who
+ * cannot act on it. A spectator who wandered in after the countdown holds no
+ * NetRoyale: if it ever drove the round, the real host would stand down, nobody
+ * would broadcast a snapshot, and the arena would freeze for the whole room,
+ * permanently. So when the incumbent is not seated in THIS round, the seats fall
+ * back to min-id among themselves — a rule every peer computes identically from
+ * the same frozen bytes. Either way a mid-round joiner never takes over, and a
+ * seated host leaving still hands off: the promoted peer already holds the last
+ * snapshot, adopts it as canonical, re-broadcasts, and resumes the host-only
+ * timers, so the round keeps advancing and can still reach game-over. A dropped
+ * seat's snake simply keeps moving straight until it crashes — the sim never
+ * stalls.
  */
 
 import type { Net, PeerId, Unsubscribe } from './engine/net';
@@ -133,14 +135,22 @@ export class NetRoyale {
   }
 
   /**
-   * The authority for THIS round: the smallest seated peer still in the room.
-   * Derived from the frozen roster, so a mid-round joiner — who has no NetRoyale
-   * and could never drive the sim — is never elected and the arena cannot stall.
+   * The authority for THIS round: the room's incumbent host whenever it is
+   * actually seated here, and otherwise the smallest seated peer still present.
+   * The fallback covers the two cases where the incumbent cannot serve — it
+   * joined mid-round as a spectator, or it inherited the room after the seated
+   * host left — and every peer computes it from the same frozen roster, so they
+   * cannot disagree. Null until the room has settled: a peer that has not heard
+   * from the mesh must not appoint itself.
    */
   private roundHost(): PeerId | null {
     const here = new Set(this.net.peers());
     const live = this.seats.filter((id) => here.has(id));
-    return live.length ? live.reduce((min, p) => (p < min ? p : min)) : null;
+    if (!live.length) return null;
+    const incumbent = this.net.hostSettled() ? this.net.host() : null;
+    if (!incumbent) return null;
+    if (live.includes(incumbent)) return incumbent;
+    return live.reduce((min, p) => (p < min ? p : min));
   }
 
   private amHost(): boolean {
@@ -185,8 +195,8 @@ export class NetRoyale {
 
   /** Wired to net.onHostChange. Becoming this round's host = the takeover. */
   setHost(_isSelfHost: boolean): void {
-    // The room's elected host is only a hint — recheck against the frozen
-    // roster, which is what actually decides who drives this round.
+    // The flag is the room's answer; roundHost() is the same answer filtered
+    // through the frozen roster, so recheck rather than trust it directly.
     this.refreshAuthority();
   }
 

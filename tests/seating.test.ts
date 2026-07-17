@@ -43,6 +43,7 @@ function mockNet(bus: Bus, selfId: PeerId): Net {
     peers: () => bus.roster(),
     host: () => bus.roster()[0],
     isHost: () => bus.roster()[0] === selfId,
+    hostSettled: () => true,
     count: () => bus.roster().length,
     channel<T>(name: string, onReceive: (d: T, from: PeerId) => void) {
       const off = bus.on(selfId, name, onReceive as (d: unknown, from: PeerId) => void);
