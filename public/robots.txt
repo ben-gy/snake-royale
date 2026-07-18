@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://snake-royale.benrichardson.dev/sitemap.xml
