@@ -7,7 +7,7 @@
  * driving ticks by hand (manualTimers) so the test is deterministic.
  */
 import { describe, expect, it } from 'vitest';
-import type { Net, PeerId } from '../src/engine/net';
+import type { Net, NetDiag, PeerId } from '@ben-gy/game-engine/net';
 import { NetRoyale, type Snapshot } from '../src/net-game';
 import type { RoyaleState, Snake } from '../src/game';
 
@@ -16,6 +16,9 @@ class FakeNet implements Net {
   private roster: PeerId[];
   /** Fan-out, mirroring the real net.ts — one name may have many receivers. */
   private handlers = new Map<string, Set<(d: unknown, from: PeerId) => void>>();
+  private rosterWatchers = new Set<(peers: PeerId[]) => void>();
+  /** Bumped by takeover(), like the real net's term. */
+  private epoch = 1;
   sent: { name: string; data: unknown }[] = [];
 
   constructor(selfId: PeerId, roster: PeerId[]) {
@@ -25,11 +28,16 @@ class FakeNet implements Net {
   /** A peer drops out of the room. */
   part(id: PeerId) {
     this.roster = this.roster.filter((p) => p !== id);
+    this.announceRoster();
   }
   /** A peer wanders in — e.g. mid-round, with an id small enough to win an
    *  unguarded election. */
   arrive(id: PeerId) {
     this.roster = [...this.roster, id];
+    this.announceRoster();
+  }
+  private announceRoster() {
+    for (const cb of [...this.rosterWatchers]) cb(this.peers());
   }
   /** Simulate a message arriving on a channel from a peer. */
   deliver(name: string, data: unknown, from: PeerId) {
@@ -50,8 +58,33 @@ class FakeNet implements Net {
   hostSettled() {
     return true;
   }
+  hostEpoch() {
+    return this.epoch;
+  }
   count() {
     return this.roster.length;
+  }
+  onPeersChange(cb: (peers: PeerId[]) => void) {
+    this.rosterWatchers.add(cb);
+    return () => this.rosterWatchers.delete(cb);
+  }
+  /** The real net mints a new term and forces itself host; here, becoming the
+   *  only seat left is the same thing. */
+  takeover() {
+    this.epoch++;
+    this.roster = [this.selfId];
+    this.announceRoster();
+  }
+  netDiag(): NetDiag {
+    return {
+      selfId: this.selfId,
+      host: this.host(),
+      epoch: this.epoch,
+      settled: true,
+      peers: this.peers(),
+      relaySockets: {},
+      turn: false,
+    };
   }
   channel<T>(name: string, onReceive: (d: T, from: PeerId) => void) {
     const h = onReceive as (d: unknown, from: PeerId) => void;

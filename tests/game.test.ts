@@ -16,7 +16,7 @@ import {
   type RoyaleState,
   type Snake,
 } from '../src/game';
-import { makeRng } from '../src/engine/rng';
+import { makeRng } from '@ben-gy/game-engine/rng';
 
 function snake(id: number, body: Cell[], dir: Dir): Snake {
   return {

@@ -953,6 +953,15 @@ body {
   justify-content: center;
   margin: 10px 0;
 }
+/* The "nobody's here yet — host this room" escape hatch. It carries a sentence
+   and a button rather than a spinner, so it stacks instead of sitting in a row. */
+.lobby-offer {
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+  max-width: 34ch;
+  margin-inline: auto;
+}
 .lobby-actions {
   display: flex;
   flex-direction: column;

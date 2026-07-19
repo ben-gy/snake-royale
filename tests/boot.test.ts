@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * as far as calling it, so it is stubbed rather than allowed to hang — and the
  * stub is what proves "no mesh at boot".
  *
- * The module specifier must match engine/net.ts's import EXACTLY ('trystero',
+ * The module specifier must match the engine's net.ts import EXACTLY ('trystero',
  * not 'trystero/nostr'): a mock on a path nothing imports is not a mock, it is a
  * test that always passes. That is not hypothetical — this file had it, and the
  * mutation that opened the board at boot sailed straight through.
@@ -33,6 +33,18 @@ const joinRoom = vi.fn(() => ({
   ping: async () => 0,
 }));
 vi.mock('trystero', () => ({ joinRoom, selfId: 'self-test' }));
+
+/**
+ * TURN, stubbed. main.ts fetches ICE servers at boot (before any mesh exists),
+ * and these cases are about routing and privacy, not infra — a test that made a
+ * real HTTPS request to the credential Worker would be slow, offline-fragile,
+ * and would time its own assertions against someone else's DNS. Resolving empty
+ * is exactly the fail-open path production takes when the Worker is
+ * unreachable, so nothing here is being papered over. tests/turn-wiring.test.ts
+ * owns the ordering guarantee itself.
+ */
+vi.mock('@ben-gy/game-engine/turn', () => ({ getTurnConfig: async () => [] }));
+
 
 /** Let queued microtasks AND timers run. The board is opened through a promise
  *  chain, so a synchronous expect() after a click asserts nothing at all. */

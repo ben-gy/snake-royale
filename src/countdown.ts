@@ -23,7 +23,7 @@
  * there is still exactly one clock the snakes move on.
  */
 
-import type { Sfx } from './engine/sound';
+import type { Sfx } from './sound';
 
 export interface CountdownOptions {
   root: HTMLElement;

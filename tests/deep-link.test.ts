@@ -14,6 +14,17 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+/**
+ * TURN, stubbed. main.ts fetches ICE servers at boot (before any mesh exists),
+ * and these cases are about routing and privacy, not infra — a test that made a
+ * real HTTPS request to the credential Worker would be slow, offline-fragile,
+ * and would time its own assertions against someone else's DNS. Resolving empty
+ * is exactly the fail-open path production takes when the Worker is
+ * unreachable, so nothing here is being papered over. tests/turn-wiring.test.ts
+ * owns the ordering guarantee itself.
+ */
+vi.mock('@ben-gy/game-engine/turn', () => ({ getTurnConfig: async () => [] }));
+
 const joined: string[] = [];
 
 function stubRoom() {

@@ -19,7 +19,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RoundsConfig, RoundsState } from '../src/engine/rematch';
+import type { RoundsConfig, RoundsState } from '@ben-gy/game-engine/rematch';
 import type { NetRoyaleConfig } from '../src/net-game';
 
 const joinRoom = vi.fn(() => ({
@@ -32,6 +32,18 @@ const joinRoom = vi.fn(() => ({
 }));
 vi.mock('trystero', () => ({ joinRoom, selfId: 'self-test' }));
 
+/**
+ * TURN, stubbed. main.ts fetches ICE servers at boot (before any mesh exists),
+ * and these cases are about routing and privacy, not infra — a test that made a
+ * real HTTPS request to the credential Worker would be slow, offline-fragile,
+ * and would time its own assertions against someone else's DNS. Resolving empty
+ * is exactly the fail-open path production takes when the Worker is
+ * unreachable, so nothing here is being papered over. tests/turn-wiring.test.ts
+ * owns the ordering guarantee itself.
+ */
+vi.mock('@ben-gy/game-engine/turn', () => ({ getTurnConfig: async () => [] }));
+
+
 /** The round protocol, stubbed to a wire we hold the other end of. */
 let roundsCfg: RoundsConfig | null = null;
 const roundsState: RoundsState = {
@@ -40,13 +52,16 @@ const roundsState: RoundsState = {
   votes: [],
   present: [],
   voted: false,
+  // Whether the frozen roster of the current round includes us. These cases all
+  // drive a round this peer IS in.
+  seated: true,
   isHost: true,
   canStart: false,
   hostOpts: null,
   startsInMs: null,
 };
-vi.mock('../src/engine/rematch', async (orig) => ({
-  ...(await orig<typeof import('../src/engine/rematch')>()),
+vi.mock('@ben-gy/game-engine/rematch', async (orig) => ({
+  ...(await orig<typeof import('@ben-gy/game-engine/rematch')>()),
   createRounds: (cfg: RoundsConfig) => {
     roundsCfg = cfg;
     return {
@@ -151,6 +166,7 @@ describe('the arena a round is played on', () => {
       seed: 42,
       players: [{ id: 'self-test', name: 'Me' }],
       isHost: true,
+      seated: true,
       opts: { mode: 'colossus', pub: false },
     });
     await settle();
@@ -171,6 +187,7 @@ describe('the arena a round is played on', () => {
         seed: 1,
         players: [{ id: 'self-test', name: 'Me' }],
         isHost: true,
+        seated: true,
         opts,
       });
       await settle();

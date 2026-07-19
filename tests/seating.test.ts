@@ -9,11 +9,11 @@
  * landed on the wrong names. createRounds freezes ONE roster into the start
  * message instead; these tests pin that the seating is a pure function of it.
  */
-import { describe, expect, it } from 'vitest';
-import { createRounds } from '../src/engine/rematch';
-import type { Net, PeerId } from '../src/engine/net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRounds } from '@ben-gy/game-engine/rematch';
+import type { Net, PeerId } from '@ben-gy/game-engine/net';
 import { createRoyale, ranking, stepRoyale, type Snake } from '../src/game';
-import { makeRng } from '../src/engine/rng';
+import { makeRng } from '@ben-gy/game-engine/rng';
 
 /** Shared synchronous bus — protocol decisions, not timing. */
 class Bus {
@@ -44,7 +44,22 @@ function mockNet(bus: Bus, selfId: PeerId): Net {
     host: () => bus.roster()[0],
     isHost: () => bus.roster()[0] === selfId,
     hostSettled: () => true,
+    hostEpoch: () => 1,
     count: () => bus.roster().length,
+    // The engine watches the roster so it never freezes one mid-handshake; this
+    // bus only changes roster when a test says so, and those tests move the
+    // clock on afterwards.
+    onPeersChange: () => () => {},
+    takeover: () => {},
+    netDiag: () => ({
+      selfId,
+      host: bus.roster()[0]!,
+      epoch: 1,
+      settled: true,
+      peers: bus.roster(),
+      relaySockets: {},
+      turn: false,
+    }),
     channel<T>(name: string, onReceive: (d: T, from: PeerId) => void) {
       const off = bus.on(selfId, name, onReceive as (d: unknown, from: PeerId) => void);
       const send = ((data: T, to?: PeerId | PeerId[]) => bus.send(selfId, name, data, to)) as ((
@@ -82,10 +97,28 @@ function table(ids: string[], minPlayers: number) {
   return { bus, seats, rounds };
 }
 
+/**
+ * The engine will not freeze a roster within ROSTER_SETTLE_MS (4s) of a roster
+ * change, and re-attempts on a 1.5s poll — that is the fix for players being
+ * dropped from a round the host started off a half-formed mesh. So an
+ * auto-start that used to be synchronous now needs the clock moved on.
+ */
+const settle = (): void => {
+  vi.advanceTimersByTime(6000);
+};
+
 describe('seating from the frozen roster', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('every peer derives the SAME seats, in the same order', () => {
     const { seats, rounds } = table(['peerC', 'peerA', 'peerB'], 3);
     rounds.forEach((p) => p.r.vote());
+    settle();
 
     // Seat N is the same player on every peer — this is what stops a score
     // landing on the wrong snake.
@@ -97,6 +130,7 @@ describe('seating from the frozen roster', () => {
   it('seats a player at the index the HOST chose, not one it re-derives', () => {
     const { seats, rounds } = table(['peerB', 'peerA'], 2);
     rounds.forEach((p) => p.r.vote());
+    settle();
 
     // peerB looking itself up in its own copy of the roster must land on the
     // same seat peerA would give it. Drift here = your rival drives your snake.
@@ -109,6 +143,7 @@ describe('seating from the frozen roster', () => {
   it('leaves a peer that joined after the start OUT of the seats', () => {
     const { bus, seats, rounds } = table(['peerB', 'peerC'], 2);
     rounds.forEach((p) => p.r.vote());
+    settle();
 
     // 'peerA' arrives once the arena is already running. It is not seated, so
     // main.ts sends it to the lobby rather than letting it play as seat 0.

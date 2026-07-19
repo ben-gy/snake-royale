@@ -26,7 +26,7 @@ import {
   soloTickMs,
 } from '../src/modes';
 import { createRoyale, stepRoyale, setDir, DIRS, type Dir, type RoyaleState } from '../src/game';
-import { makeRng } from '../src/engine/rng';
+import { makeRng } from '@ben-gy/game-engine/rng';
 
 describe('modeOf', () => {
   it('resolves a known id', () => {
