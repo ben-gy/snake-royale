@@ -3,7 +3,7 @@
  * boards (spawn slots + food). If this fails, every multiplayer session desyncs.
  */
 import { describe, expect, it } from 'vitest';
-import { makeRng, hashSeed, randInt, shuffle, pick } from '../src/engine/rng';
+import { makeRng, hashSeed, randInt, shuffle, pick } from '@ben-gy/game-engine/rng';
 import { createRoyale, spawnSnakes } from '../src/game';
 
 describe('makeRng determinism (P2P sync invariant)', () => {

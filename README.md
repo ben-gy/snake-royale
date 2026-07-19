@@ -27,15 +27,18 @@ Live **peer-to-peer** over WebRTC — there is no game server. One player create
 room and shares the 4-letter code (or the invite link); a friend can **type the
 code** or open the link. The host runs the authoritative simulation and
 broadcasts a snapshot each tick; if the host leaves, the game re-elects a new
-host on the fly and the round keeps going. A free public signaling relay only
-brokers the initial connection — after that, game data flows directly between
-players and nothing is stored on any server.
+host on the fly and the round keeps going. Public signaling relays broker the
+initial connection, and a small first-party TURN service relays the WebRTC
+handshake for players whose network (carrier NAT, school or office Wi-Fi) cannot
+open a direct path. Neither carries gameplay data, and nothing is stored on any
+server.
 
 ## Tech
 - Vite 6 + vanilla TypeScript
 - Canvas 2D rendering with interpolation, particles and screen shake
-- Shared engine: fixed-timestep loop, unified keyboard/touch input, procedural
-  audio, Trystero P2P netcode, seedable deterministic RNG
+- Shared engine (`@ben-gy/game-engine`): epoch-based host election, round and
+  rematch protocol, unified keyboard/touch input, seedable deterministic RNG,
+  Trystero P2P netcode over WebRTC
 - Vitest for game logic, P2P-sync determinism, host-transfer takeover and
   room-code tests
 - GitHub Pages hosting

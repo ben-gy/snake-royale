@@ -16,8 +16,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCountdown } from '../src/countdown';
 import { NetRoyale } from '../src/net-game';
-import type { Net, PeerId } from '../src/engine/net';
-import type { Sfx, SfxName } from '../src/engine/sound';
+import type { Net, NetDiag, PeerId } from '@ben-gy/game-engine/net';
+import type { Sfx, SfxName } from '../src/sound';
 
 /** The same shape round-authority.test.ts uses: roster and incumbent set by hand,
  *  no network, so the count/play seam is exercised deterministically. */
@@ -26,6 +26,9 @@ class FakeNet implements Net {
   private roster: PeerId[];
   private incumbent: PeerId | null;
   private handlers = new Map<string, Set<(d: unknown, from: PeerId) => void>>();
+  private rosterWatchers = new Set<(peers: PeerId[]) => void>();
+  /** The incumbent's term. takeover() mints a new one, exactly like net.ts. */
+  private epoch = 1;
   sent: { name: string; data: unknown }[] = [];
 
   constructor(selfId: PeerId, roster: PeerId[], incumbent?: PeerId | null) {
@@ -38,6 +41,7 @@ class FakeNet implements Net {
   }
   part(id: PeerId) {
     this.roster = this.roster.filter((p) => p !== id);
+    this.announceRoster();
   }
   peers() {
     return [...this.roster].sort();
@@ -53,6 +57,32 @@ class FakeNet implements Net {
   }
   count() {
     return this.roster.length;
+  }
+  hostEpoch() {
+    return this.epoch;
+  }
+  onPeersChange(cb: (peers: PeerId[]) => void) {
+    this.rosterWatchers.add(cb);
+    return () => this.rosterWatchers.delete(cb);
+  }
+  /** A deliberate "host this room" — new term, and we are the incumbent. */
+  takeover() {
+    this.epoch++;
+    this.incumbent = this.selfId;
+  }
+  netDiag(): NetDiag {
+    return {
+      selfId: this.selfId,
+      host: this.incumbent,
+      epoch: this.epoch,
+      settled: this.hostSettled(),
+      peers: this.peers(),
+      relaySockets: {},
+      turn: false,
+    };
+  }
+  private announceRoster() {
+    for (const cb of [...this.rosterWatchers]) cb(this.peers());
   }
   channel<T>(name: string, onReceive: (d: T, from: PeerId) => void) {
     const h = onReceive as (d: unknown, from: PeerId) => void;

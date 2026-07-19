@@ -29,8 +29,8 @@
  * stalls.
  */
 
-import type { Net, PeerId, Unsubscribe } from './engine/net';
-import { makeRng, type Rng } from './engine/rng';
+import type { Net, PeerId, Unsubscribe } from '@ben-gy/game-engine/net';
+import { makeRng, type Rng } from '@ben-gy/game-engine/rng';
 import {
   createRoyale,
   setDir,

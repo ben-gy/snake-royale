@@ -15,7 +15,7 @@
  *             is a thing you build rather than stumble into.
  *
  * The host picks; the choice travels frozen inside the round start (see
- * engine/rematch.ts), so every peer runs the same arena at the same speed. A
+ * the engine's rematch.ts), so every peer runs the same arena at the same speed. A
  * mode each peer read from its own UI is a mode two peers can disagree about —
  * and here that means two peers stepping the same seed at different rates.
  */

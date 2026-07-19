@@ -9,10 +9,10 @@
  * Everything here is a pure function of (state, inputs, rng) so it is trivially
  * testable and — crucially — a peer promoted to host can adopt any snapshot and
  * keep stepping it to a valid game-over. All shared randomness (food placement,
- * spawn slots) flows from the lobby seed via engine/rng.ts; never Math.random().
+ * spawn slots) flows from the lobby seed via the engine's rng.ts; never Math.random().
  */
 
-import { makeRng, randInt, type Rng } from './engine/rng';
+import { makeRng, randInt, type Rng } from '@ben-gy/game-engine/rng';
 
 export type Dir = 'up' | 'down' | 'left' | 'right';
 export interface Cell {
