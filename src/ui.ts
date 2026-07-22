@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Ben Richardson — https://benrichardson.dev
+// Additional terms under AGPL-3.0 section 7(b) apply; see ADDITIONAL-TERMS.md.
 /**
  * ui.ts — static markup + a modal helper for Snake Royale menus and panels.
  * Rendering the live game is render.ts's job; this is the surrounding chrome.

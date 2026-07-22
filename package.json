@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Classic snake, but 2–6 snakes share one arena — eat, grow, cut rivals off; last snake slithering wins.",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
