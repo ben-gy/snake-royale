@@ -19,7 +19,8 @@ import {
   type RoyaleState,
 } from './game';
 import { makeRng, newSeed, type Rng } from '@ben-gy/game-engine/rng';
-import { createSfx } from './sound';
+import { createSfx } from '@ben-gy/game-engine/sound';
+import { CUES } from './cues';
 import { createStore } from '@ben-gy/game-engine/storage';
 import { createInput, type Input } from '@ben-gy/game-engine/input';
 import { hardenViewport } from '@ben-gy/game-engine/mobile';
@@ -103,7 +104,7 @@ const turnReady: Promise<void> = getTurnConfig().then(
 
 const store = createStore(APP_ID);
 const settings = { muted: store.get('muted', false) };
-const sfx = createSfx(settings.muted);
+const sfx = createSfx({ muted: settings.muted, patches: CUES });
 const reducedMotion =
   typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -687,7 +688,7 @@ class GameSession {
     for (const cell of u.events.eatenAt) this.view.burstAt(cell, '#F0C420', 12);
     if (u.events.ate.length) {
       const combo = 1 + Math.min(0.8, (this.driver.getState().snakes[u.events.ate[0]]?.score ?? 0) * 0.03);
-      sfx.play('eat', combo);
+      sfx.play('eat', { pitch: combo });
     }
     for (const seat of u.events.died) {
       const s = u.state.snakes[seat];

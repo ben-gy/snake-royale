@@ -26,7 +26,7 @@
  * there is still exactly one clock the snakes move on.
  */
 
-import type { Sfx } from './sound';
+import type { Sfx } from '@ben-gy/game-engine/sound';
 
 export interface CountdownOptions {
   root: HTMLElement;
@@ -67,7 +67,7 @@ export function createCountdown(o: CountdownOptions): Countdown {
     if (n > 0) {
       paint(String(n), 'cd-tick');
       // Pitch climbs with the count so the ear tracks it without reading.
-      o.sfx.play('beep', 1 + (from - n) * 0.12);
+      o.sfx.play('beep', { pitch: 1 + (from - n) * 0.12 });
       n--;
       timer = setTimeout(step, everyMs);
       return;

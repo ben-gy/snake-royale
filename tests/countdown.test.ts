@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCountdown } from '../src/countdown';
 import { NetRoyale } from '../src/net-game';
 import type { Net, NetDiag, PeerId } from '@ben-gy/game-engine/net';
-import type { Sfx, SfxName } from '../src/sound';
+import type { Sfx, SfxName } from '@ben-gy/game-engine/sound';
 
 /** The same shape round-authority.test.ts uses: roster and incumbent set by hand,
  *  no network, so the count/play seam is exercised deterministically. */
@@ -111,6 +111,8 @@ function fakeSfx(): Sfx & { played: SfxName[] } {
     },
     muted: () => false,
     setMuted() {},
+    addPatches() {},
+    has: () => true,
   };
 }
 
@@ -159,11 +161,13 @@ describe('createCountdown', () => {
     const pitches: number[] = [];
     const sfx: Sfx = {
       unlock() {},
-      play(_n, p) {
-        if (p !== undefined) pitches.push(p);
+      play(_n, opts) {
+        if (opts?.pitch !== undefined) pitches.push(opts.pitch);
       },
       muted: () => false,
       setMuted() {},
+      addPatches() {},
+      has: () => true,
     };
     createCountdown({ root, sfx, everyMs: 1000, onDone: () => {} });
     vi.advanceTimersByTime(2000);
