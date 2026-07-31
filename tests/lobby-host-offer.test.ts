@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createLobby } from '../src/lobby';
+import { createLobby } from '@ben-gy/game-engine/lobby';
 import type { Net, NetDiag, PeerId } from '@ben-gy/game-engine/net';
 import type { Rounds, RoundsState } from '@ben-gy/game-engine/rematch';
 

@@ -841,6 +841,16 @@ body {
 .mode-note strong {
   color: var(--text);
 }
+/* The engine lobby wraps whatever `modeSlot` returns in this block — the arena
+   picker and the public/private chips, which used to sit bare in the card. It is
+   deliberately layout-neutral: `.lobby` is a plain block and each picker carries
+   its own bottom margin, so the wrapper must not add spacing of its own or the
+   two chip grids drift apart. Declared rather than left to the UA default so the
+   class is owned here; lobby-engine-surface.test.ts fails on an unstyled one. */
+.lobby-modeslot {
+  display: block;
+  margin: 0;
+}
 
 /* ---- countdown ------------------------------------------------------------- */
 /* Sits over the arena so the snakes are readable before they move — the whole

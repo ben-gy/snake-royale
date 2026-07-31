@@ -37,7 +37,7 @@ import {
   P2P_IP_NOTE,
   type BoardAccess,
   type Listing,
-} from './lobby';
+} from '@ben-gy/game-engine/lobby';
 import { createNoticeboard, type Noticeboard, type PublicRoom } from '@ben-gy/game-engine/noticeboard';
 import { NetRoyale, type NetUpdate, type Phase } from './net-game';
 import { CanvasView, SNAKE_COLORS } from './render';
